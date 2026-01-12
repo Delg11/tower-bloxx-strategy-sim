@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tower Bloxx Strategy Simulator</title>
+    <meta name="description" content="Simulador de estratégia urbana baseado no jogo Tower Bloxx.">
+    <meta name="author" content="Gabriel Silva Delgado">
+    
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style>
+        body { background-color: #0f172a; color: #e2e8f0; font-family: 'Segoe UI', system-ui, sans-serif; }
+        /* Custom Scrollbar e Range Input */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        input[type=range] { accent-color: #fbbf24; }
+        
+        /* Animações */
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        .modal-animate { animation: fadeIn 0.2s ease-out forwards; }
+        
+        /* Animação de Dica (Hint Pulse) */
+        @keyframes hintPulse {
+            0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(255, 255, 255, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+        }
+        .hint-active { animation: hintPulse 2s infinite; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // --- Configurações e Constantes ---
+        const BOARD_SIZE = 5;
+        
+        // Mapeamento para Compressão Hexadecimal
+        const TYPE_MAP = ['empty', 'blue', 'red', 'green', 'yellow', 'void'];
+        const REVERSE_TYPE_MAP = { 'empty': 0, 'blue': 1, 'red': 2, 'green': 3, 'yellow': 4, 'void': 5 };
+
+        const TEXTS = {
+            pt: {
+                title: "Simulador Tower Bloxx",
+                subtitle: "Ferramenta de Otimização Urbana",
+                score: "População",
+                tools: "Construção",
+                utils: "Ferramentas",
+                history: "Linha do Tempo",
+                step: "Passo",
+                export: "Salvar / Compartilhar",
+                import: "Carregar Código",
+                reset: "Reiniciar Tabuleiro",
+                save_modal_title: "Seu Código de Save",
+                save_modal_desc: "Copie o código abaixo para salvar sua estratégia ou compartilhar com outros. O código inclui todo o histórico de jogadas.",
+                save_success: "Copiado para a área de transferência!",
+                close: "Fechar",
+                importPrompt: "Cole o código do jogo aqui:",
+                invalid: "Código Inválido ou Corrompido!",
+                loaded: "Estratégia carregada com sucesso!",
+                // Errors
+                err_void: "Terreno inativo! Use a ferramenta de inativar novamente para liberar.",
+                err_red: "Regra violada: Verde precisa de vizinhos AZUL e VERMELHO.", 
+                err_red_logic: "Regra violada: Vermelho precisa de vizinho AZUL.",
+                err_green: "Regra violada: Verde precisa de vizinhos AZUL e VERMELHO.",
+                err_yellow: "Regra violada: Amarelo precisa de AZUL, VERMELHO e VERDE.",
+                // Tooltips
+                lbl_blue: "Residencial",
+                lbl_red: "Comercial",
+                lbl_green: "Escritório",
+                lbl_yellow: "Luxo",
+                lbl_void: "Inativar",
+                lbl_erase: "Borracha"
+            },
+            en: {
+                title: "Tower Bloxx Simulator",
+                subtitle: "Urban Optimization Tool",
+                score: "Population",
+                tools: "Build",
+                utils: "Tools",
+                history: "Timeline",
+                step: "Step",
+                export: "Save / Share",
+                import: "Load Code",
+                reset: "Reset Board",
+                save_modal_title: "Your Save Code",
+                save_modal_desc: "Copy the code below to save your strategy or share it. This code includes your entire move history.",
+                save_success: "Copied to clipboard!",
+                close: "Close",
+                importPrompt: "Paste the save code here:",
+                invalid: "Invalid or Corrupted Code!",
+                loaded: "Strategy loaded successfully!",
+                // Errors
+                err_void: "Inactive terrain! Use the void tool again to enable.",
+                err_red_logic: "Rule violation: Red needs a BLUE neighbor.",
+                err_green: "Rule violation: Green needs BLUE and RED neighbors.",
+                err_yellow: "Rule violation: Yellow needs BLUE, RED and GREEN.",
+                // Tooltips
+                lbl_blue: "Residential",
+                lbl_red: "Commercial",
+                lbl_green: "Office",
+                lbl_yellow: "Luxury",
+                lbl_void: "Disable",
+                lbl_erase: "Eraser"
+            }
+        };
+
+        const TYPES = {
+            EMPTY:  { id: 'empty',  score: 0, color: 'bg-slate-700', ring: 'ring-slate-500' },
+            VOID:   { id: 'void',   score: 0, color: 'bg-black', ring: 'ring-gray-500' },
+            BLUE:   { id: 'blue',   score: 1, color: 'bg-blue-500', ring: 'ring-blue-300' },
+            RED:    { id: 'red',    score: 2, color: 'bg-red-500', ring: 'ring-red-300' },
+            GREEN:  { id: 'green',  score: 3, color: 'bg-emerald-500', ring: 'ring-emerald-300' },
+            YELLOW: { id: 'yellow', score: 4, color: 'bg-amber-400', ring: 'ring-amber-200' },
+        };
+
+        // Componente Modal
+        const Modal = ({ isOpen, onClose, title, children }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-slate-800 border border-slate-600 rounded-xl shadow-2xl w-full max-w-lg modal-animate flex flex-col max-h-[90vh]">
+                        <div className="flex justify-between items-center p-4 border-b border-slate-700">
+                            <h3 className="text-xl font-bold text-white">{title}</h3>
+                            <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">✕</button>
+                        </div>
+                        <div className="p-6 overflow-y-auto">
+                            {children}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [lang, setLang] = useState('pt');
+            const t = TEXTS[lang];
+
+            // Estado Principal
+            const [history, setHistory] = useState([
+                Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(TYPES.EMPTY.id))
+            ]);
+            const [moveLog, setMoveLog] = useState([]); 
+            const [currentStep, setCurrentStep] = useState(0);
+            
+            const grid = history[currentStep];
+
+            // UI States
+            const [selectedTool, setSelectedTool] = useState(TYPES.BLUE.id);
+            const [errorMsg, setErrorMsg] = useState("");
+            const [feedbackMsg, setFeedbackMsg] = useState("");
+            
+            // Modal States
+            const [showModal, setShowModal] = useState(false);
+            const [generatedCode, setGeneratedCode] = useState("");
+            const codeTextAreaRef = useRef(null);
+
+            // --- Lógica de Regras ---
+            const getNeighbors = (r, c, currentGrid) => {
+                const neighbors = [];
+                const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+                directions.forEach(([dr, dc]) => {
+                    const nr = r + dr;
+                    const nc = c + dc;
+                    if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
+                        neighbors.push(currentGrid[nr][nc]);
+                    }
+                });
+                return neighbors;
+            };
+
+            const canPlace = (r, c, typeId, currentGrid) => {
+                // Ferramentas de edição livre
+                if (typeId === TYPES.EMPTY.id || typeId === TYPES.VOID.id) return { valid: true };
+                // Não constrói em void
+                if (currentGrid[r][c] === TYPES.VOID.id) return { valid: false, msg: t.err_void };
+
+                const neighbors = getNeighbors(r, c, currentGrid);
+                const hasBlue = neighbors.includes(TYPES.BLUE.id);
+                const hasRed = neighbors.includes(TYPES.RED.id);
+                const hasGreen = neighbors.includes(TYPES.GREEN.id);
+
+                if (typeId === TYPES.BLUE.id) return { valid: true };
+                if (typeId === TYPES.RED.id) return { valid: hasBlue, msg: t.err_red_logic };
+                if (typeId === TYPES.GREEN.id) return { valid: hasBlue && hasRed, msg: t.err_green };
+                if (typeId === TYPES.YELLOW.id) return { valid: hasBlue && hasRed && hasGreen, msg: t.err_yellow };
+                return { valid: true };
+            };
+
+            // --- Ações ---
+            const handleAction = (r, c) => {
+                setErrorMsg("");
+                let newType = selectedTool;
+
+                if (selectedTool === TYPES.VOID.id) {
+                    newType = grid[r][c] === TYPES.VOID.id ? TYPES.EMPTY.id : TYPES.VOID.id;
+                } else if (selectedTool !== TYPES.EMPTY.id) {
+                    const check = canPlace(r, c, selectedTool, grid);
+                    if (!check.valid) {
+                        setErrorMsg(check.msg);
+                        return;
+                    }
+                }
+
+                const newGrid = grid.map(row => [...row]);
+                newGrid[r][c] = newType;
+
+                const newHistory = history.slice(0, currentStep + 1);
+                newHistory.push(newGrid);
+                
+                const newMoveLog = moveLog.slice(0, currentStep);
+                newMoveLog.push({ r, c, typeIndex: REVERSE_TYPE_MAP[newType] });
+
+                setHistory(newHistory);
+                setMoveLog(newMoveLog);
+                setCurrentStep(newHistory.length - 1);
+            };
+
+            const resetBoard = () => {
+                if(!confirm(lang === 'pt' ? "Tem certeza?" : "Are you sure?")) return;
+                const emptyGrid = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(TYPES.EMPTY.id));
+                setHistory([emptyGrid]);
+                setMoveLog([]);
+                setCurrentStep(0);
+                setErrorMsg("");
+                setFeedbackMsg("");
+            };
+
+            // --- Import/Export ---
+            const generateSaveCode = () => {
+                let code = "V1-";
+                moveLog.forEach(move => {
+                    const packedVal = (move.r * 30) + (move.c * 6) + move.typeIndex;
+                    code += packedVal.toString(16).padStart(2, '0');
+                });
+                
+                const finalCode = code.toUpperCase();
+                setGeneratedCode(finalCode);
+                setShowModal(true);
+
+                navigator.clipboard.writeText(finalCode).then(() => {
+                    setFeedbackMsg(t.save_success);
+                }).catch(() => {});
+            };
+
+            const loadSaveCode = () => {
+                const input = prompt(t.importPrompt);
+                if (!input) return;
+
+                try {
+                    const cleanInput = input.trim().toUpperCase();
+                    if (!cleanInput.startsWith("V1-")) throw new Error("Bad version");
+
+                    const hexStream = cleanInput.split("-")[1];
+                    if (hexStream.length % 2 !== 0) throw new Error("Corrupt");
+
+                    const historyRebuild = [Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(TYPES.EMPTY.id))];
+                    const movesRebuild = [];
+                    let currentGridRebuild = historyRebuild[0];
+
+                    for (let i = 0; i < hexStream.length; i += 2) {
+                        const val = parseInt(hexStream.substr(i, 2), 16);
+                        const r = Math.floor(val / 30);
+                        const rem = val % 30;
+                        const c = Math.floor(rem / 6);
+                        const typeIndex = rem % 6;
+                        const typeId = TYPE_MAP[typeIndex];
+
+                        const nextGrid = currentGridRebuild.map(row => [...row]);
+                        nextGrid[r][c] = typeId;
+                        
+                        historyRebuild.push(nextGrid);
+                        currentGridRebuild = nextGrid;
+                        movesRebuild.push({ r, c, typeIndex });
+                    }
+
+                    setHistory(historyRebuild);
+                    setMoveLog(movesRebuild);
+                    setCurrentStep(historyRebuild.length - 1);
+                    alert(t.loaded);
+                } catch (e) {
+                    alert(t.invalid);
+                }
+            };
+
+            const score = useMemo(() => {
+                let total = 0;
+                grid.forEach(row => row.forEach(cellId => {
+                    const type = Object.values(TYPES).find(t => t.id === cellId);
+                    if (type) total += type.score;
+                }));
+                return total;
+            }, [grid]);
+
+            return (
+                <div className="min-h-screen flex flex-col relative">
+                    
+                    {/* Main Content (PB-20 prevents footer overlay) */}
+                    <div className="flex-grow flex flex-col items-center justify-center p-4 pb-24">
+                        
+                        {/* Header */}
+                        <div className="w-full max-w-4xl flex justify-between items-end mb-2 border-b border-slate-700 pb-4">
+                            <div>
+                                <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">
+                                    {t.title}
+                                </h1>
+                                <p className="text-slate-400 text-sm">{t.subtitle}</p>
+                            </div>
+                            <div className="flex bg-slate-800 rounded-lg p-1">
+                                <button onClick={() => setLang('pt')} className={`px-3 py-1 text-xs font-bold rounded ${lang === 'pt' ? 'bg-slate-600 text-white' : 'text-slate-400'}`}>PT</button>
+                                <button onClick={() => setLang('en')} className={`px-3 py-1 text-xs font-bold rounded ${lang === 'en' ? 'bg-slate-600 text-white' : 'text-slate-400'}`}>EN</button>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col lg:flex-row gap-8 items-start w-full max-w-5xl justify-center">
+                            
+                            {/* Left Panel: Game Board */}
+                            <div className="flex flex-col gap-4 mx-auto lg:mx-0">
+                                
+                                {/* Score Display - Linha separada */}
+                                <div className="text-center w-full bg-slate-800/50 rounded-lg p-2 border border-slate-700">
+                                     <div className="text-2xl font-mono text-white">
+                                        {t.score}: <span className="text-amber-400 font-bold">{score}</span>
+                                    </div>
+                                </div>
+
+                                {/* Error Display Area - Altura Fixa (h-8) para não pular */}
+                                <div className="h-8 w-full flex items-center justify-center">
+                                     {errorMsg && (
+                                        <div className="px-4 py-1 bg-red-900/40 border border-red-500/50 rounded text-red-300 text-xs font-bold animate-pulse">
+                                            ⚠️ {errorMsg}
+                                        </div>
+                                     )}
+                                </div>
+
+                                {/* The Grid */}
+                                <div className="grid grid-cols-5 gap-3 bg-slate-800 p-6 rounded-2xl shadow-xl border border-slate-700 select-none">
+                                    {grid.map((row, r) => (
+                                        row.map((cellId, c) => {
+                                            const type = Object.values(TYPES).find(t => t.id === cellId);
+                                            const isVoid = cellId === 'void';
+                                            const isEmpty = cellId === 'empty';
+                                            
+                                            // Lógica de DICA (Hint System)
+                                            // AGORA: Verifica se é possível colocar, independente de estar vazio ou não (mas não void)
+                                            let isHint = false;
+                                            if (selectedTool !== TYPES.EMPTY.id && selectedTool !== TYPES.VOID.id && !isVoid) {
+                                                const check = canPlace(r, c, selectedTool, grid);
+                                                if (check.valid) isHint = true;
+                                            }
+
+                                            // Cor de Dica: Pega a cor da ferramenta selecionada
+                                            const selectedToolType = Object.values(TYPES).find(t => t.id === selectedTool);
+                                            
+                                            return (
+                                                <div 
+                                                    key={`${r}-${c}`}
+                                                    onClick={() => handleAction(r, c)}
+                                                    className={`
+                                                        w-12 h-12 sm:w-16 sm:h-16 flex items-center justify-center 
+                                                        rounded-lg cursor-pointer transition-all duration-200
+                                                        ${isVoid ? 'border-2 border-dashed border-slate-600 opacity-30 hover:opacity-50' : 'border-2 border-slate-600/50 shadow-lg active:scale-95'}
+                                                        ${type.color}
+                                                        ${isHint ? `hint-active ring-4 ${selectedToolType ? selectedToolType.ring : ''}` : ''}
+                                                        ${isHint && isEmpty ? selectedToolType.color.replace('bg-', 'bg-opacity-20 bg-') : ''} 
+                                                    `}
+                                                >
+                                                    <span className="text-lg font-bold text-white drop-shadow-md opacity-90 mix-blend-overlay">
+                                                        {!isVoid && type.score > 0 ? type.score : ''}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })
+                                    ))}
+                                </div>
+
+                                {/* Timeline Slider */}
+                                <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 shadow-lg">
+                                    <div className="flex justify-between text-xs text-slate-400 mb-2 font-mono uppercase tracking-widest">
+                                        <span>{t.history}</span>
+                                        <span>{t.step} {currentStep} / {history.length - 1}</span>
+                                    </div>
+                                    <input 
+                                        type="range" 
+                                        min="0" 
+                                        max={history.length - 1} 
+                                        value={currentStep} 
+                                        onChange={(e) => { setCurrentStep(Number(e.target.value)); setErrorMsg(""); }}
+                                        className="w-full h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer hover:bg-slate-500 transition-colors"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Right Panel: Controls */}
+                            <div className="flex flex-col gap-4 w-full max-w-xs mx-auto lg:mx-0">
+                                
+                                {/* Building Tools */}
+                                <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg">
+                                    <h3 className="text-xs font-bold text-slate-500 uppercase mb-4 tracking-wider">{t.tools}</h3>
+                                    <div className="space-y-3">
+                                        {[TYPES.BLUE, TYPES.RED, TYPES.GREEN, TYPES.YELLOW].map(type => {
+                                            const isSelected = selectedTool === type.id;
+                                            return (
+                                                <button
+                                                    key={type.id}
+                                                    onClick={() => setSelectedTool(type.id)}
+                                                    className={`
+                                                        w-full flex items-center justify-between px-4 py-3 rounded-xl font-bold text-sm transition-all
+                                                        ${type.color} 
+                                                        ${isSelected 
+                                                            ? `ring-2 ring-white scale-105 text-slate-900 shadow-xl opacity-100` 
+                                                            : `text-slate-100 opacity-60 hover:opacity-90 hover:scale-102 border border-slate-600/30`}
+                                                    `}
+                                                >
+                                                    <span className={isSelected ? "" : "drop-shadow-md"}>{t['lbl_' + type.id]}</span>
+                                                    <span className="bg-black/20 px-2 py-0.5 rounded text-white text-xs font-mono">{type.score}</span>
+                                                </button>
+                                            )
+                                        })}
+                                    </div>
+                                </div>
+
+                                {/* Utility Tools */}
+                                <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 shadow-lg flex flex-col gap-3">
+                                    <h3 className="text-xs font-bold text-slate-500 uppercase mb-1 tracking-wider">{t.utils}</h3>
+                                    
+                                    <div className="grid grid-cols-2 gap-3 mb-2">
+                                        <button onClick={() => setSelectedTool(TYPES.VOID.id)} 
+                                            className={`p-3 rounded-xl text-sm font-semibold transition-all border border-slate-600
+                                                ${selectedTool === TYPES.VOID.id ? 'bg-black ring-1 ring-white' : 'bg-black/50 hover:bg-black text-gray-400 hover:text-white'}`}>
+                                            ⬛ {t.lbl_void}
+                                        </button>
+                                        <button onClick={() => setSelectedTool(TYPES.EMPTY.id)} 
+                                            className={`p-3 rounded-xl text-sm font-semibold transition-all
+                                                ${selectedTool === TYPES.EMPTY.id ? 'bg-slate-500 ring-1 ring-white' : 'bg-slate-600 hover:bg-slate-500 text-gray-200'}`}>
+                                            🗑️ {t.lbl_erase}
+                                        </button>
+                                    </div>
+
+                                    <div className="h-px bg-slate-700 my-2"></div>
+
+                                    <button onClick={generateSaveCode} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-3 rounded-xl text-sm font-bold transition-all shadow-lg hover:shadow-indigo-500/25 flex items-center justify-center gap-2">
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
+                                        {t.export}
+                                    </button>
+                                    <button onClick={loadSaveCode} className="w-full bg-slate-700 hover:bg-slate-600 text-slate-200 py-3 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2">
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                                        {t.import}
+                                    </button>
+                                    
+                                    <button onClick={resetBoard} className="mt-2 text-rose-400 text-xs hover:text-rose-300 hover:bg-rose-900/20 py-2 rounded transition-colors">
+                                        {t.reset}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Footer Solicitado */}
+                    <footer className="fixed bottom-0 left-0 right-0 bg-gray-100 border-t border-gray-300 py-2 text-[10px] sm:text-xs text-gray-600 z-50">
+                        <div className="max-w-6xl mx-auto px-2 sm:px-4 text-center">
+                            <div className="hidden sm:block truncate">
+                                Projeto livre e independente • Licença
+                                <a href="https://github.com/Delg11" target="_blank" rel="noopener noreferrer" className="underline hover:text-indigo-600 ml-1"> GNU GPL</a>
+                                {' • '}
+                                Doações via PIX: <span className="font-mono font-semibold ml-1">g.delgado@unifesp.br</span>
+                            </div>
+                            <div className="sm:hidden flex flex-col gap-0.5 text-[9px]">
+                                <p className="truncate">Projeto livre • <a href="https://github.com/Delg11" target="_blank" rel="noopener noreferrer" className="underline">GNU GPL</a></p>
+                                <p className="truncate">PIX: <span className="font-mono font-semibold break-all">g.delgado@unifesp.br</span></p>
+                            </div>
+                        </div>
+                    </footer>
+
+                    {/* Save Modal */}
+                    <Modal 
+                        isOpen={showModal} 
+                        onClose={() => setShowModal(false)}
+                        title={t.save_modal_title}
+                    >
+                        <p className="text-slate-300 mb-4 text-sm">{t.save_modal_desc}</p>
+                        
+                        {feedbackMsg && (
+                            <div className="mb-4 p-3 bg-emerald-900/30 text-emerald-400 rounded-lg text-sm font-bold border border-emerald-800 flex items-center gap-2">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
+                                {feedbackMsg}
+                            </div>
+                        )}
+
+                        <div className="relative">
+                            <textarea 
+                                ref={codeTextAreaRef}
+                                readOnly
+                                value={generatedCode}
+                                className="w-full h-32 bg-black/50 border border-slate-600 rounded-lg p-3 text-mono text-slate-300 text-xs focus:ring-2 focus:ring-indigo-500 outline-none resize-none font-mono tracking-widest"
+                                onClick={(e) => e.target.select()}
+                            />
+                        </div>
+
+                        <div className="mt-6 flex justify-end">
+                            <button 
+                                onClick={() => setShowModal(false)}
+                                className="bg-slate-700 hover:bg-slate-600 text-white px-6 py-2 rounded-lg font-bold transition-colors"
+                            >
+                                {t.close}
+                            </button>
+                        </div>
+                    </Modal>
+
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
