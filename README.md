@@ -1,5 +1,7 @@
 # 🏙️ Tower Bloxx Strategy Simulator (EN-US)
 
+Acess here: https://delg11.github.io/tower-bloxx-strategy-sim/
+
 An interactive simulator and optimization tool for the “Build City” mode of the classic game **Tower Bloxx**.
 
 This project was created to help players test urban layout strategies, maximizing population without the time pressure or physics of the original game. It allows planning complex placements (such as setups for Diamond/Yellow towers) and sharing solutions with the community.
@@ -62,6 +64,8 @@ This project is licensed under the **GNU GPL**. Feel free to use, study, and mod
 
 
 # 🏙️ Tower Bloxx Strategy Simulator (PT-BR)
+
+Acesse aqui: https://delg11.github.io/tower-bloxx-strategy-sim/
 
 Um simulador interativo e ferramenta de otimização para o modo "Build City" do clássico jogo **Tower Bloxx**.
 
